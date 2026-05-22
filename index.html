@@ -42,10 +42,10 @@ const ROAD_W   = 2000;
 const CAM_H    = 1000;
 const CAM_D    = 0.84;
 const DRAW_D   = 110;
-const MAX_SPD  = 380;
-const ACCEL_F  = 48;
-const BRAKE_F  = 85;
-const DECEL_F  = 32;
+const MAX_SPD  = 8000;
+const ACCEL_F  = 600;
+const BRAKE_F  = 1200;
+const DECEL_F  = 400;
 const STEER_F  = 0.022;
 const HORIZON  = H / 2;
 
@@ -421,7 +421,7 @@ function drawCityGlow(sky) {
 
 // ─── HUD ─────────────────────────────────────────────────
 function drawHUD(spd) {
-  const km = Math.floor(spd * 3.6);
+  const km = Math.floor(spd / MAX_SPD * 340);
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillRect(4, 4, 68, 14);
   ctx.fillStyle = km > 250 ? '#ff5020' : '#00ee77';
@@ -455,7 +455,7 @@ function loop(now) {
   if (left)  camX -= sStr;
   if (right) camX += sStr;
   // 路外で減速
-  if (Math.abs(camX) > 1.0) spd *= Math.pow(0.97, Math.abs(camX) - 1.0);
+  if (Math.abs(camX) > 1.0) spd *= Math.pow(0.94, Math.abs(camX) - 1.0);
   camX = Math.max(-2.5, Math.min(2.5, camX));
 
   pos += spd * dt;
