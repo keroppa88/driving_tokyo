@@ -38,7 +38,7 @@ input[type=range]{width:150px;accent-color:#446;cursor:pointer}
 // ─── 定数 ───────────────────────────────────────────────────
 const W = 320, H = 240;
 const SEG_LEN  = 200;
-const ROAD_W   = 1000;
+const ROAD_W   = 750;    // 手前道路全幅=W/2(160px)になる値
 const CAM_H    = 1000;
 const CAM_D    = 0.84;
 const DRAW_D   = 110;
@@ -47,7 +47,7 @@ const ACCEL_F  = 3000;
 const BRAKE_F  = 6000;
 const DECEL_F  = 2000;
 const STEER_F  = 0.022;
-const HORIZON  = Math.round(H / 3);
+const HORIZON  = Math.round(H * 2 / 3);  // 160px 下33%が道路
 
 const cv  = document.getElementById('c');
 const ctx = cv.getContext('2d');
@@ -441,11 +441,10 @@ function drawPlayerCar(crvLook) {
   if (!img.complete || !img.naturalWidth) return;  // ロード前はスキップ
 
   // 表示サイズ: 横140px に固定、縦は元画像の縦横比を維持
-  const dw = 140;
+  const dw = 47;   // 140の1/3
   const dh = Math.round(img.naturalHeight / img.naturalWidth * dw);
   const cx = (W / 2) | 0;
-  // 車の上部を画面外に隠して、車体下半分だけ見せる（アウトラン風）
-  const visibleH = 62;                     // 画面内に見せる高さ(px)
+  const visibleH = 21;   // 62の1/3
   const dx = cx - (dw / 2) | 0;
   const dy = H - visibleH;
 
@@ -600,8 +599,8 @@ function loop(now) {
   carQ.sort((a, b) => b.z - a.z);
   for (const c of carQ) {
     const s = SPR[c.key];
-    const dw = Math.max(2, Math.round(s.width  * c.sc * 190));
-    const dh = Math.max(2, Math.round(s.height * c.sc * 190));
+    const dw = Math.max(2, Math.round(s.width  * c.sc * 63));
+    const dh = Math.max(2, Math.round(s.height * c.sc * 63));
     ctx.drawImage(s, (c.x - dw/2)|0, (c.y - dh)|0, dw, dh);
   }
 
