@@ -151,38 +151,71 @@ makeSign('sg_speed',  '#380808', '#d03030', '≦  80',  '#ff8080');
 
 const SIGN_KEYS = ['sg_tokyo', 'sg_exit', 'sg_km', 'sg_speed'];
 
-// プレイヤー車（ボンネット越し視点）
-{
+// プレイヤー車スプライト 3枚 (まっすぐ / 右カーブ / 左カーブ)
+function makePlayerSprite(key, shift) {
+  // shift: 0=まっすぐ, +1=右カーブ(ボンネット左寄り), -1=左カーブ(右寄り)
   const oc = document.createElement('canvas');
   oc.width = 64; oc.height = 36;
   const c = oc.getContext('2d');
-  // ボンネット面
+  const s = shift * 7;  // ピクセルオフセット
+
+  // ボンネット（台形、shiftで非対称に）
   c.fillStyle = '#c02018';
   c.beginPath();
-  c.moveTo(4, 36); c.lineTo(60, 36);
-  c.lineTo(54, 10); c.lineTo(10, 10);
+  c.moveTo(2,        36);
+  c.lineTo(62,       36);
+  c.lineTo(52 + s,   10);
+  c.lineTo(12 + s,   10);
   c.closePath(); c.fill();
+
   // ボンネット中央ライン
   c.strokeStyle = '#a01810'; c.lineWidth = 2;
-  c.beginPath(); c.moveTo(32, 36); c.lineTo(32, 10); c.stroke();
+  c.beginPath();
+  c.moveTo(32,      36);
+  c.lineTo(32 + s,  10);
+  c.stroke();
+
   // ボンネット横ライン
   c.strokeStyle = '#881408'; c.lineWidth = 1;
-  c.beginPath(); c.moveTo(8, 24); c.lineTo(56, 24); c.stroke();
-  // エアダクト左右
+  c.beginPath();
+  c.moveTo(6,       22 + (shift > 0 ? -2 : shift < 0 ? 2 : 0));
+  c.lineTo(58,      22 + (shift > 0 ? 2  : shift < 0 ? -2 : 0));
+  c.stroke();
+
+  // エアダクト（shiftに追従）
   c.fillStyle = '#701010';
-  c.fillRect(12, 14, 8, 8);
-  c.fillRect(44, 14, 8, 8);
-  // フロントウィンドウ下端（ダッシュボード上端）
-  c.fillStyle = '#1a1a1a';
-  c.fillRect(8, 8, 48, 4);
-  // ダッシュボード
-  c.fillStyle = '#181818';
-  c.fillRect(0, 0, 64, 9);
+  c.fillRect(10 + s, 13, 9, 7);
+  c.fillRect(45 + s, 13, 9, 7);
+
+  // ダッシュボード上端
+  c.fillStyle = '#1c1c1c';
+  c.fillRect(0, 0, 64, 10);
+
+  // カーブ時は片側の視野（ピラー）を暗く
+  if (shift > 0) {
+    // 右カーブ：左ピラー部分を暗く（右側が広く見える）
+    c.fillStyle = 'rgba(0,0,0,0.45)';
+    c.beginPath();
+    c.moveTo(0,0); c.lineTo(14,0); c.lineTo(18,36); c.lineTo(0,36);
+    c.closePath(); c.fill();
+  } else if (shift < 0) {
+    // 左カーブ：右ピラーを暗く
+    c.fillStyle = 'rgba(0,0,0,0.45)';
+    c.beginPath();
+    c.moveTo(64,0); c.lineTo(50,0); c.lineTo(46,36); c.lineTo(64,36);
+    c.closePath(); c.fill();
+  }
+
   // フロントガラス反射
-  c.fillStyle = 'rgba(80,120,160,0.3)';
-  c.fillRect(8, 0, 48, 9);
-  SPR['player'] = oc;
+  c.fillStyle = 'rgba(80,120,160,0.25)';
+  c.fillRect(0, 0, 64, 10);
+
+  SPR[key] = oc;
 }
+
+makePlayerSprite('player_c',  0);   // まっすぐ
+makePlayerSprite('player_r', +1);   // 右カーブ
+makePlayerSprite('player_l', -1);   // 左カーブ
 
 // 他車
 function makeCar(key, body, roof) {
@@ -452,19 +485,20 @@ function drawCityGlow(sky) {
   ctx.fillRect(0, HORIZON - 20, W, 20);
 }
 
-// ─── プレイヤー車（底部・傾き付き）─────────────────────────
+// ─── プレイヤー車（底部・3枚切り替え）────────────────────────
 function drawPlayerCar(camX) {
-  const s  = SPR['player'];
+  // camX の大きさでスプライト選択
+  let key;
+  if      (camX >  0.18) key = 'player_r';
+  else if (camX < -0.18) key = 'player_l';
+  else                   key = 'player_c';
+
+  const s  = SPR[key];
   const dw = 120, dh = 68;
   const cx = W / 2;
-  const cy = H + 10;                    // 少し画面外にかかる
-  const tilt = camX * 0.10;            // ステア量に比例して傾く
+  const cy = H + 12;   // 下端を少し画面外にかける
 
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(tilt);
-  ctx.drawImage(s, -dw / 2, -dh, dw, dh);
-  ctx.restore();
+  ctx.drawImage(s, (cx - dw / 2) | 0, (cy - dh) | 0, dw, dh);
 }
 
 // ─── HUD ─────────────────────────────────────────────────
