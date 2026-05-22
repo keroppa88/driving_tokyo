@@ -463,9 +463,10 @@ function drawHUD(spd) {
 }
 
 // ─── ゲーム状態 ──────────────────────────────────────────
-let pos  = 0;
-let spd  = 0;
-let camX = 0;   // 横位置（ステアリング）
+let pos   = 0;
+let spd   = 0;
+let camX  = 0;   // プレイヤーステアリングオフセット
+let roadX = 0;   // 道路カーブ自動追従カメラX
 
 // ─── メインループ ─────────────────────────────────────────
 let lastT = 0;
@@ -487,11 +488,18 @@ function loop(now) {
   const sStr = STEER_F * (spd / MAX_SPD + 0.35) * dt * 60;
   if (left)  camX -= sStr;
   if (right) camX += sStr;
+  // ステアを離したら中央へ戻す
+  if (!left && !right) camX *= Math.pow(0.88, dt * 60);
   // 路外で減速
   if (Math.abs(camX) > 1.0) spd *= Math.pow(0.94, Math.abs(camX) - 1.0);
   camX = Math.max(-2.5, Math.min(2.5, camX));
 
   pos += spd * dt;
+
+  // 道路カーブに合わせてカメラX自動追従
+  const curIdx = Math.floor(pos / SEG_LEN) % segs.length;
+  roadX += segs[curIdx].curve * spd * dt * 0.000018;
+  roadX  = Math.max(-3, Math.min(3, roadX));
   if (pos >= COURSE_LEN) pos -= COURSE_LEN;
 
   // 他車更新（プレイヤーとの相対Z）
@@ -535,9 +543,9 @@ function loop(now) {
     const zF  = zC + SEG_LEN;                     // 奥エッジZ
     if (zF <= 0.5) { crvAcc += seg.curve; continue; }
 
-    const worldXC = (crvAcc - camX) * ROAD_W * 0.38;
+    const worldXC = (crvAcc - roadX - camX) * ROAD_W * 0.38;
     crvAcc += seg.curve;
-    const worldXF = (crvAcc - camX) * ROAD_W * 0.38;
+    const worldXF = (crvAcc - roadX - camX) * ROAD_W * 0.38;
 
     const pC = projPt(worldXC, Math.max(0.5, zC));
     const pF = projPt(worldXF, zF);
