@@ -47,7 +47,7 @@ const ACCEL_F  = 3000;
 const BRAKE_F  = 6000;
 const DECEL_F  = 2000;
 const STEER_F  = 0.022;
-const HORIZON  = H / 2;
+const HORIZON  = Math.round(H / 3);
 
 const cv  = document.getElementById('c');
 const ctx = cv.getContext('2d');
@@ -312,7 +312,7 @@ function projPt(worldX, worldZ) {
   const sc = CAM_D / worldZ;
   return {
     x:  W/2 + sc * worldX * (W/2),
-    y:  H/2 + sc * CAM_H  * (H/2),
+    y:  HORIZON + sc * CAM_H * (H / 2),
     w:  sc * ROAD_W * (W/2),
     sc,
   };
@@ -427,17 +427,16 @@ function drawCityGlow(sky) {
 }
 
 // ─── プレイヤー車（底部・PNG 3枚切り替え）───────────────────
-// nearRoadX = 手前道路中心のスクリーンX
-//   < W/2 - 8  → 道路が左に寄っている → 右カーブ → mycar1
-//   > W/2 + 8  → 道路が右に寄っている → 左カーブ → mycar2
-//   中央付近   → まっすぐ → mycar0
-function drawPlayerCar(nearRoadX) {
-  const CENTER = W / 2;
-  const THRESH = 8;
+// crvLook = 直近5セグメントのカーブ合計
+//   > 0  → 右カーブ → mycar1
+//   < 0  → 左カーブ → mycar2
+//   ≈ 0  → まっすぐ → mycar0
+function drawPlayerCar(crvLook) {
+  const THRESH = 0.05;
   let img;
-  if      (nearRoadX < CENTER - THRESH) img = MYCAR[1];   // 右カーブ
-  else if (nearRoadX > CENTER + THRESH) img = MYCAR[2];   // 左カーブ
-  else                                  img = MYCAR[0];   // まっすぐ
+  if      (crvLook >  THRESH) img = MYCAR[1];   // 右カーブ
+  else if (crvLook < -THRESH) img = MYCAR[2];   // 左カーブ
+  else                        img = MYCAR[0];   // まっすぐ
 
   if (!img.complete || !img.naturalWidth) return;  // ロード前はスキップ
 
@@ -524,7 +523,10 @@ function loop(now) {
   const PL = [];        // 投影リスト
   let crvAcc = 0;       // カーブX累積 (road-width単位)
   let prevClipY = H;    // クリップY（手前から奥へ描くため）
-  let nearRoadX = W / 2; // 最近接セグメントの道路中心スクリーンX（スプライト判定用）
+  let nearRoadX = W / 2; // 最近接セグメントの道路中心スクリーンX
+  // 直近5セグメントのカーブ合計でスプライト即時判定
+  let crvLook = 0;
+  for (let k = 0; k < 5; k++) crvLook += segs[(startIdx + k) % segs.length].curve;
 
   for (let n = 0; n < DRAW_D; n++) {
     const si  = (startIdx + n) % segs.length;
@@ -596,7 +598,7 @@ function loop(now) {
   }
 
   drawRain(now);
-  drawPlayerCar(nearRoadX);
+  drawPlayerCar(crvLook);
   drawHUD(spd);
 
   requestAnimationFrame(loop);
