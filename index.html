@@ -38,7 +38,7 @@ input[type=range]{width:150px;accent-color:#446;cursor:pointer}
 // ─── 定数 ───────────────────────────────────────────────────
 const W = 320, H = 240;
 const SEG_LEN  = 200;
-const ROAD_W   = 2000;
+const ROAD_W   = 1000;
 const CAM_H    = 1000;
 const CAM_D    = 0.84;
 const DRAW_D   = 110;
@@ -427,12 +427,17 @@ function drawCityGlow(sky) {
 }
 
 // ─── プレイヤー車（底部・PNG 3枚切り替え）───────────────────
-function drawPlayerCar(camX) {
-  // camX の符号と大きさで3枚を切り替え
+// nearRoadX = 手前道路中心のスクリーンX
+//   < W/2 - 8  → 道路が左に寄っている → 右カーブ → mycar1
+//   > W/2 + 8  → 道路が右に寄っている → 左カーブ → mycar2
+//   中央付近   → まっすぐ → mycar0
+function drawPlayerCar(nearRoadX) {
+  const CENTER = W / 2;
+  const THRESH = 8;
   let img;
-  if      (camX >  0.18) img = MYCAR[1];   // mycar1.png 右カーブ
-  else if (camX < -0.18) img = MYCAR[2];   // mycar2.png 左カーブ
-  else                   img = MYCAR[0];   // mycar0.png まっすぐ
+  if      (nearRoadX < CENTER - THRESH) img = MYCAR[1];   // 右カーブ
+  else if (nearRoadX > CENTER + THRESH) img = MYCAR[2];   // 左カーブ
+  else                                  img = MYCAR[0];   // まっすぐ
 
   if (!img.complete || !img.naturalWidth) return;  // ロード前はスキップ
 
@@ -519,6 +524,7 @@ function loop(now) {
   const PL = [];        // 投影リスト
   let crvAcc = 0;       // カーブX累積 (road-width単位)
   let prevClipY = H;    // クリップY（手前から奥へ描くため）
+  let nearRoadX = W / 2; // 最近接セグメントの道路中心スクリーンX（スプライト判定用）
 
   for (let n = 0; n < DRAW_D; n++) {
     const si  = (startIdx + n) % segs.length;
@@ -533,6 +539,9 @@ function loop(now) {
 
     const pC = projPt(worldXC, Math.max(0.5, zC));
     const pF = projPt(worldXF, zF);
+
+    // 最初に有効な手前セグメントの道路中心X を記録
+    if (PL.length === 0 && pC) nearRoadX = pC.x;
 
     PL.push({ pC, pF, seg, n, crvX: crvAcc });
   }
@@ -587,7 +596,7 @@ function loop(now) {
   }
 
   drawRain(now);
-  drawPlayerCar(camX);
+  drawPlayerCar(nearRoadX);
   drawHUD(spd);
 
   requestAnimationFrame(loop);
