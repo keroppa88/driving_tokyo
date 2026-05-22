@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>DRIVING TOKYO</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080808;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;min-height:100vh;font-family:'Courier New',monospace}
+canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;
+  width:640px;height:480px;border:1px solid #1a1a1a}
+#ui{margin-top:14px;display:flex;gap:48px;align-items:flex-end}
+.sl{display:flex;flex-direction:column;align-items:center;gap:6px}
+.sl span{font-size:9px;letter-spacing:4px;color:#444}
+.sl em{font-size:10px;color:#666;font-style:normal;min-width:72px;text-align:center}
+input[type=range]{width:150px;accent-color:#446;cursor:pointer}
+#hint{margin-top:8px;font-size:9px;color:#2a2a2a;letter-spacing:2px}
+</style>
+</head>
+<body>
+<canvas id="c" width="320" height="240"></canvas>
+<div id="ui">
+  <div class="sl">
+    <span>時 刻</span>
+    <input type="range" id="sTime" min="0" max="100" value="78">
+    <em id="vTime">夜</em>
+  </div>
+  <div class="sl">
+    <span>天 候</span>
+    <input type="range" id="sWeather" min="0" max="100" value="25">
+    <em id="vWeather">薄曇り</em>
+  </div>
+</div>
+<div id="hint">↑↓ ACCEL/BRAKE　←→ STEER</div>
+
+<script>
+'use strict';
+// ─── 定数 ───────────────────────────────────────────────────
+const W = 320, H = 240;
+const SEG_LEN  = 200;
+const ROAD_W   = 2000;
+const CAM_H    = 1000;
+const CAM_D    = 0.84;
+const DRAW_D   = 110;
+const MAX_SPD  = 380;
+const ACCEL_F  = 48;
+const BRAKE_F  = 85;
+const DECEL_F  = 32;
+const STEER_F  = 0.022;
+const HORIZON  = H / 2;
+
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ─── コース ───────────────────────────────────────────────
+const segs = [];
+
+function addS(n, curve) {
+  for (let i = 0; i < n; i++) {
+    segs.push({ curve, stripe: Math.floor(segs.length / 4) & 1, objs: [] });
+  }
+}
+
+// 首都高イメージ：緩やかなS字カーブ連続
+addS(50,  0.00);
+addS(60,  0.22);
+addS(30,  0.00);
+addS(70, -0.20);
+addS(40,  0.00);
+addS(55,  0.28);
+addS(35,  0.00);
+addS(65, -0.24);
+addS(40,  0.00);
+addS(50,  0.15);
+addS(35,  0.00);
+
+// 2周分コピー（ループ）
+const BASE = segs.length;
+for (let i = 0; i < BASE; i++) {
+  segs.push({ curve: segs[i].curve, stripe: segs[i].stripe, objs: [] });
+}
+const COURSE_LEN = segs.length * SEG_LEN;
+
+// ─── ビルスプライト ─────────────────────────────────────────
+const SPR = {};
+
+function makeBuilding(key, bw, bh, body, winLit, winDark, roofC) {
+  const oc = document.createElement('canvas');
+  oc.width = bw; oc.height = bh;
+  const c = oc.getContext('2d');
+  c.fillStyle = body;
+  c.fillRect(0, 0, bw, bh);
+  // 屋上
+  c.fillStyle = roofC;
+  c.fillRect(0, 0, bw, 3);
+  // 窓
+  const ww = Math.max(2, Math.floor(bw / 6));
+  const wh = Math.max(2, Math.floor(bh / 9));
+  const cols = Math.floor((bw - 4) / (ww + 3));
+  const rows = Math.floor((bh - 6) / (wh + 4));
+  const seed = key.charCodeAt(0);
+  for (let r = 0; r < rows; r++) {
+    for (let cl = 0; cl < cols; cl++) {
+      c.fillStyle = ((r * 7 + cl * 11 + seed) % 4 !== 0) ? winLit : winDark;
+      c.fillRect(3 + cl * (ww + 3), 5 + r * (wh + 4), ww, wh);
+    }
+  }
+  c.strokeStyle = 'rgba(0,0,0,0.7)';
+  c.lineWidth = 1;
+  c.strokeRect(0.5, 0.5, bw - 1, bh - 1);
+  SPR[key] = oc;
+}
+
+// 首都高沿い・東京夜景ビル群
+makeBuilding('b_of1', 42, 84, '#1a2534', '#ffd880', '#101820', '#0c1420');
+makeBuilding('b_of2', 38, 68, '#222c44', '#8ac8ff', '#161c30', '#101428');
+makeBuilding('b_of3', 34, 76, '#1c2238', '#ffe0a0', '#101428', '#0c1020');
+makeBuilding('b_tw1', 24, 100,'#181a38', '#fff4a0', '#0e1028', '#0a0c1e');
+makeBuilding('b_tw2', 20, 116,'#1e1834', '#ffb870', '#12102a', '#0c0a1c');
+makeBuilding('b_tw3', 28, 92, '#1c2040', '#80ffcc', '#101428', '#0a1020');
+makeBuilding('b_lo1', 56, 38, '#282c34', '#c8e4ff', '#18202a', '#141820');
+makeBuilding('b_lo2', 48, 32, '#2e2820', '#ffd880', '#201c14', '#18140e');
+makeBuilding('b_lo3', 62, 30, '#303038', '#ffa860', '#201e28', '#18181e');
+makeBuilding('b_ap1', 36, 58, '#222c22', '#ffde80', '#141e14', '#0e1810');
+makeBuilding('b_ap2', 30, 72, '#201c38', '#ff90c8', '#140c28', '#0e0820');
+makeBuilding('b_mn1', 44, 88, '#1e2c3a', '#a0d4ff', '#121c28', '#0c1420');
+makeBuilding('b_mn2', 32, 80, '#242030', '#ffcc80', '#181428', '#10101e');
+
+const BLDG_KEYS = Object.keys(SPR);
+
+// 看板
+function makeSign(key, bg, border, text, textCol) {
+  const oc = document.createElement('canvas');
+  oc.width = 30; oc.height = 18;
+  const c = oc.getContext('2d');
+  c.fillStyle = bg;
+  c.fillRect(0, 0, 30, 18);
+  c.strokeStyle = border;
+  c.lineWidth = 1;
+  c.strokeRect(1, 1, 28, 16);
+  c.fillStyle = textCol;
+  c.font = '6px monospace';
+  c.fillText(text, 3, 12);
+  SPR[key] = oc;
+}
+
+makeSign('sg_tokyo',  '#1a3060', '#4090d8', '東京 IC',  '#b0d8ff');
+makeSign('sg_exit',   '#1a3820', '#50a050', 'EXIT 2K', '#90d888');
+makeSign('sg_km',     '#302010', '#c08030', 'C1  2.4', '#ffe090');
+makeSign('sg_speed',  '#380808', '#d03030', '≦  80',  '#ff8080');
+
+const SIGN_KEYS = ['sg_tokyo', 'sg_exit', 'sg_km', 'sg_speed'];
+
+// 他車
+function makeCar(key, body, roof) {
+  const oc = document.createElement('canvas');
+  oc.width = 18; oc.height = 12;
+  const c = oc.getContext('2d');
+  c.fillStyle = body;
+  c.fillRect(0, 4, 18, 8);
+  c.fillStyle = roof;
+  c.fillRect(3, 1, 12, 8);
+  c.fillStyle = '#2c3e50';
+  c.fillRect(4, 2, 10, 5);
+  // テールライト
+  c.fillStyle = '#ff2828';
+  c.fillRect(1, 5, 3, 4);
+  c.fillRect(14, 5, 3, 4);
+  // ナンバー
+  c.fillStyle = '#aaa';
+  c.fillRect(7, 11, 4, 1);
+  SPR[key] = oc;
+}
+
+makeCar('cr_w', '#c0c0c0', '#989898');
+makeCar('cr_y', '#c0a030', '#987820');
+makeCar('cr_b', '#3050b0', '#203888');
+makeCar('cr_k', '#222222', '#141414');
+makeCar('cr_r', '#b02020', '#881818');
+makeCar('cr_g', '#2c6840', '#1e4e2c');
+makeCar('cr_s', '#708090', '#506070');
+
+const CAR_KEYS = ['cr_w','cr_y','cr_b','cr_k','cr_r','cr_g','cr_s'];
+
+// ─── オブジェクト配置 ────────────────────────────────────────
+(function place() {
+  // ビルを密に (首都高両脇に高密度)
+  for (let i = 4; i < segs.length; i++) {
+    const p = i % 6;
+    if (p === 0 || p === 3) {
+      const side = (i % 12 < 6) ? -1 : 1;
+      const key  = BLDG_KEYS[i % BLDG_KEYS.length];
+      const off  = 1.15 + (i % 5) * 0.12;
+      segs[i].objs.push({ key, side, off, type: 'bldg' });
+    }
+    if (p === 1 || p === 4) {
+      // 反対側にも
+      const side = (i % 12 < 6) ? 1 : -1;
+      const key  = BLDG_KEYS[(i + 5) % BLDG_KEYS.length];
+      const off  = 1.18 + (i % 4) * 0.10;
+      segs[i].objs.push({ key, side, off, type: 'bldg' });
+    }
+  }
+  // 看板 (控えめに)
+  for (let i = 16; i < segs.length; i += 18 + (i % 7)) {
+    const k = SIGN_KEYS[i % SIGN_KEYS.length];
+    segs[i].objs.push({ key: k, side: (i % 2 ? 1 : -1), off: 1.05, type: 'sign' });
+  }
+})();
+
+// ─── 他車 ──────────────────────────────────────────────────
+const LANES = [-0.55, 0, 0.55];
+const cars = Array.from({ length: 7 }, (_, i) => ({
+  z:    600 + i * 380 + (i * 173 % 280),
+  lane: LANES[i % 3],
+  spd:  120 + (i * 41 % 130),
+  key:  CAR_KEYS[i % CAR_KEYS.length],
+}));
+
+// ─── 入力 ──────────────────────────────────────────────────
+const KEY = {};
+addEventListener('keydown', e => { KEY[e.key] = true;  e.preventDefault(); });
+addEventListener('keyup',   e => { KEY[e.key] = false; });
+
+// ─── スライダー ────────────────────────────────────────────
+let timeV    = 78;
+let weatherV = 25;
+
+const T_LBL = [[0,'深夜'],[12,'未明'],[22,'夜明け'],[38,'朝'],[52,'昼'],[66,'夕方'],[80,'夜'],[93,'深夜']];
+const W_LBL = [[0,'晴れ'],[22,'薄曇り'],[42,'曇り'],[60,'雨'],[78,'本降り'],[90,'豪雨']];
+
+function lbl(v, tbl) { let l = tbl[0][1]; for (const [t,n] of tbl) if (v >= t) l = n; return l; }
+
+const slT = document.getElementById('sTime');
+const slW = document.getElementById('sWeather');
+const vT  = document.getElementById('vTime');
+const vW  = document.getElementById('vWeather');
+
+slT.addEventListener('input', () => { timeV    = +slT.value; vT.textContent = lbl(timeV,    T_LBL); });
+slW.addEventListener('input', () => { weatherV = +slW.value; vW.textContent = lbl(weatherV, W_LBL); });
+vT.textContent = lbl(timeV,    T_LBL);
+vW.textContent = lbl(weatherV, W_LBL);
+
+// ─── 色補間 ──────────────────────────────────────────────
+function hexRgb(h) {
+  return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+}
+function rgbHex(r,g,b) {
+  return '#'+[r,g,b].map(v=>Math.round(Math.min(255,Math.max(0,v))).toString(16).padStart(2,'0')).join('');
+}
+function lerpC(a,b,t){ const [ar,ag,ab]=hexRgb(a),[br,bg,bb]=hexRgb(b); return rgbHex(ar+(br-ar)*t,ag+(bg-ag)*t,ab+(bb-ab)*t); }
+
+// 空のキーフレーム [t, top, bottom, fogHorizon, groundLeft, groundRight]
+const SKY_KF = [
+  [0.00, '#030409', '#06090f', '#080c14', '#06080a', '#080a0e'],
+  [0.12, '#060818', '#0b0e22', '#10142a', '#080a06', '#0a0e08'],
+  [0.24, '#121430', '#382032', '#483038', '#120e08', '#181208'],
+  [0.33, '#1a2060', '#c83818', '#e05028', '#1c1008', '#241508'],
+  [0.42, '#2848a0', '#5888c0', '#78a8d0', '#162408', '#1e3010'],
+  [0.52, '#3c68b8', '#82b0d0', '#a0c8e8', '#1a2c0e', '#223814'],
+  [0.64, '#2450a0', '#5888c0', '#78a8d8', '#162008', '#1e2c0e'],
+  [0.70, '#903410', '#f06020', '#f08848', '#1c1008', '#281408'],
+  [0.78, '#280898', '#6030a0', '#806090', '#100a18', '#180e20'],
+  [0.85, '#0c1228', '#181428', '#1e1c30', '#060808', '#080a0a'],
+  [1.00, '#030409', '#06090f', '#080c14', '#06080a', '#080a0e'],
+];
+
+function getSky() {
+  const t = timeV / 100;
+  let a = SKY_KF[0], b = SKY_KF[SKY_KF.length-1];
+  for (let i = 0; i < SKY_KF.length-1; i++) {
+    if (t >= SKY_KF[i][0] && t <= SKY_KF[i+1][0]) { a = SKY_KF[i]; b = SKY_KF[i+1]; break; }
+  }
+  const f = (b[0]-a[0]) < 1e-4 ? 0 : (t-a[0])/(b[0]-a[0]);
+  return {
+    top: lerpC(a[1],b[1],f), bot: lerpC(a[2],b[2],f),
+    fog: lerpC(a[3],b[3],f), gl:  lerpC(a[4],b[4],f), gr: lerpC(a[5],b[5],f),
+  };
+}
+
+// 道路パレット（首都高：コンクリート・ガードレール）
+function getRoadPalette(sky) {
+  const night   = timeV < 30 || timeV > 80;
+  const evening = timeV >= 64 && timeV <= 82;
+  // 首都高沿い：草ではなくコンクリート・壁
+  const wall = night ? '#1c1e22' : (evening ? '#2a2018' : '#383c40');
+  const wallB = night ? '#262830' : (evening ? '#342818' : '#424850');
+  if (night) return {
+    rd:  ['#1a1e22','#1e2226'], ru: ['#880000','#cccccc'],
+    ln:  '#2c3038', gd: wall, gl: wallB,
+  };
+  if (evening) return {
+    rd:  ['#302418','#28201a'], ru: ['#d04020','#e8c860'],
+    ln:  '#503828', gd: wall, gl: wallB,
+  };
+  return {
+    rd:  ['#3c3c40','#464648'], ru: ['#c02020','#e0e0e0'],
+    ln:  '#6c6c70', gd: wall, gl: wallB,
+  };
+}
+
+// ─── 投影 ─────────────────────────────────────────────────
+function projPt(worldX, worldZ) {
+  if (worldZ < 0.5) return null;
+  const sc = CAM_D / worldZ;
+  return {
+    x:  W/2 + sc * worldX * (W/2),
+    y:  H/2 + sc * CAM_H  * (H/2),
+    w:  sc * ROAD_W * (W/2),
+    sc,
+  };
+}
+
+// ─── ストライプ描画 pF=奥(上) pN=手前(下) ──────────────────
+function drawStripe(pF, pN, pal, stripe) {
+  if (!pF || !pN) return;
+  const yTop = Math.max(0,   Math.ceil(pF.y));
+  const yBot = Math.min(H,   Math.ceil(pN.y));
+  if (yBot <= yTop || yTop >= H || yBot <= 0) return;
+
+  const x1F = pF.x - pF.w, x2F = pF.x + pF.w;
+  const x1N = pN.x - pN.w, x2N = pN.x + pN.w;
+  const s   = stripe & 1;
+
+  // 左右の壁・草地帯（首都高コンクリート）
+  ctx.fillStyle = pal[s ? 'gl' : 'gd'];
+  ctx.fillRect(0, yTop, W, yBot - yTop);
+
+  // 路面
+  trap(x1F, yTop, x2F, yTop, x2N, yBot, x1N, yBot, pal.rd[s]);
+
+  // ランブルストリップ（ガードレール内側）
+  const rF = pF.w * 0.12, rN = pN.w * 0.12;
+  trap(x1F, yTop, x1F + rF, yTop, x1N + rN, yBot, x1N, yBot, pal.ru[s]);
+  trap(x2F - rF, yTop, x2F, yTop, x2N, yBot, x2N - rN, yBot, pal.ru[s]);
+
+  // センターライン＋車線
+  if (!s) {
+    const cF = pF.w * 0.02, cN = pN.w * 0.02;
+    trap(pF.x - cF, yTop, pF.x + cF, yTop, pN.x + cN, yBot, pN.x - cN, yBot, pal.ln);
+    // 車線
+    const lF = pF.w * 0.56, lN = pN.w * 0.56;
+    const hF = pF.w * 0.012, hN = pN.w * 0.012;
+    trap(pF.x-lF-hF,yTop,pF.x-lF+hF,yTop,pN.x-lN+hN,yBot,pN.x-lN-hN,yBot,pal.ln);
+    trap(pF.x+lF-hF,yTop,pF.x+lF+hF,yTop,pN.x+lN+hN,yBot,pN.x+lN-hN,yBot,pal.ln);
+  }
+}
+
+function trap(x1,y1,x2,y2,x3,y3,x4,y4,col) {
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.lineTo(x4,y4);
+  ctx.closePath(); ctx.fill();
+}
+
+// ─── スプライト描画 ──────────────────────────────────────
+function drawSpr(key, sx, sy, sc, side) {
+  const s = SPR[key]; if (!s) return;
+  const dw = Math.round(s.width  * sc * 300);
+  const dh = Math.round(s.height * sc * 300);
+  if (dw < 1 || dh < 1 || dw > 400) return;
+  const dx = side < 0 ? sx - dw : sx;
+  const dy = sy - dh;
+  if (dy > H || dx > W || dx + dw < 0) return;
+  ctx.drawImage(s, dx, dy, dw, dh);
+}
+
+// ─── 雨 ─────────────────────────────────────────────────
+function drawRain(now) {
+  if (weatherV < 18) return;
+  const q = (weatherV - 18) / 82;
+  const n = Math.floor(q * 150);
+  const al = 0.2 + q * 0.4;
+  ctx.strokeStyle = `rgba(190,210,225,${al.toFixed(2)})`;
+  ctx.lineWidth = 1;
+  const t = now / 40;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 79 + t * 6) % W;
+    const y = (i * 47 + t * 10) % H;
+    const l = 3 + (i % 6);
+    ctx.beginPath();
+    ctx.moveTo(x|0, y|0); ctx.lineTo((x+1)|0, (y+l)|0);
+    ctx.stroke();
+  }
+  if (weatherV > 48) {
+    const fa = (weatherV - 48) / 52 * 0.4;
+    const fg = ctx.createLinearGradient(0, HORIZON - 8, 0, H);
+    fg.addColorStop(0, 'rgba(175,195,210,0)');
+    fg.addColorStop(1, `rgba(175,195,210,${fa.toFixed(2)})`);
+    ctx.fillStyle = fg; ctx.fillRect(0, HORIZON-8, W, H-HORIZON+8);
+  }
+}
+
+// ─── 星 ─────────────────────────────────────────────────
+const STARS = Array.from({length:80},(_,i)=>({
+  x:(i*131+29)%W, y:(i*79+13)%(HORIZON-4), b:0.25+(i%7)*0.11
+}));
+function drawStars() {
+  const n = timeV < 35 ? 1-(timeV/35) : timeV > 76 ? (timeV-76)/24 : 0;
+  if (n <= 0) return;
+  const s = Math.min(1, n * 1.5);
+  for (const st of STARS) {
+    ctx.globalAlpha = st.b * s;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(st.x, st.y, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// 街の光（夜・夕方）
+function drawCityGlow(sky) {
+  const night = timeV < 32 || timeV > 76;
+  if (!night) return;
+  const intensity = timeV < 32 ? 0.6 : 0.5;
+  const g = ctx.createLinearGradient(0, HORIZON - 20, 0, HORIZON);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(255,140,30,${(intensity * 0.25).toFixed(2)})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, HORIZON - 20, W, 20);
+}
+
+// ─── HUD ─────────────────────────────────────────────────
+function drawHUD(spd) {
+  const km = Math.floor(spd * 3.6);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(4, 4, 68, 14);
+  ctx.fillStyle = km > 250 ? '#ff5020' : '#00ee77';
+  ctx.font = '8px monospace';
+  ctx.fillText(`${km.toString().padStart(3,' ')} km/h`, 8, 14);
+}
+
+// ─── ゲーム状態 ──────────────────────────────────────────
+let pos  = 0;
+let spd  = 0;
+let camX = 0;   // 横位置（ステアリング）
+
+// ─── メインループ ─────────────────────────────────────────
+let lastT = 0;
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+
+  // 入力
+  const gas   = KEY['ArrowUp']    || KEY['w'];
+  const brake = KEY['ArrowDown']  || KEY['s'];
+  const left  = KEY['ArrowLeft']  || KEY['a'];
+  const right = KEY['ArrowRight'] || KEY['d'];
+
+  if (gas)   spd = Math.min(MAX_SPD, spd + ACCEL_F * dt * 60);
+  if (brake) spd = Math.max(0,       spd - BRAKE_F * dt * 60);
+  if (!gas && !brake) spd = Math.max(0, spd - DECEL_F * dt * 60);
+
+  const sStr = STEER_F * (spd / MAX_SPD + 0.35) * dt * 60;
+  if (left)  camX -= sStr;
+  if (right) camX += sStr;
+  // 路外で減速
+  if (Math.abs(camX) > 1.0) spd *= Math.pow(0.97, Math.abs(camX) - 1.0);
+  camX = Math.max(-2.5, Math.min(2.5, camX));
+
+  pos += spd * dt;
+  if (pos >= COURSE_LEN) pos -= COURSE_LEN;
+
+  // 他車更新（プレイヤーとの相対Z）
+  for (const car of cars) {
+    car.z -= spd * dt;
+    if (car.z < 40) {
+      car.z  = DRAW_D * SEG_LEN * (0.35 + (car.z % 1 + Math.random()) * 0.4);
+      car.lane = LANES[Math.floor(Math.random() * 3)];
+    }
+  }
+
+  // ─── 描画 ────────────────────────────────────────────
+  const sky = getSky();
+  const pal = getRoadPalette(sky);
+
+  // 空
+  const grad = ctx.createLinearGradient(0, 0, 0, HORIZON);
+  grad.addColorStop(0, sky.top);
+  grad.addColorStop(1, sky.bot);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, HORIZON);
+  drawStars();
+  drawCityGlow(sky);
+
+  // ── 道路セグメント投影 ──────────────────────────────
+  const startIdx = Math.floor(pos / SEG_LEN) % segs.length;
+  const posInSeg = pos % SEG_LEN;
+
+  const PL = [];        // 投影リスト
+  let crvAcc = 0;       // カーブX累積 (road-width単位)
+  let prevClipY = H;    // クリップY（手前から奥へ描くため）
+
+  for (let n = 0; n < DRAW_D; n++) {
+    const si  = (startIdx + n) % segs.length;
+    const seg = segs[si];
+    const zC  = n * SEG_LEN - posInSeg;          // 手前エッジZ
+    const zF  = zC + SEG_LEN;                     // 奥エッジZ
+    if (zF <= 0.5) { crvAcc += seg.curve; continue; }
+
+    const worldXC = (crvAcc - camX) * ROAD_W * 0.38;
+    crvAcc += seg.curve;
+    const worldXF = (crvAcc - camX) * ROAD_W * 0.38;
+
+    const pC = projPt(worldXC, Math.max(0.5, zC));
+    const pF = projPt(worldXF, zF);
+
+    PL.push({ pC, pF, seg, n, crvX: crvAcc });
+  }
+
+  // 奥から手前へ描画
+  const objQ = [];  // オブジェクト描画キュー
+  const carQ = [];
+
+  for (let i = PL.length - 1; i >= 0; i--) {
+    const { pC, pF, seg } = PL[i];
+    drawStripe(pF, pC, pal, seg.stripe);
+
+    if (!pC) continue;
+
+    // オブジェクト
+    for (const obj of seg.objs) {
+      const sign  = obj.side;
+      const sx    = pC.x + sign * pC.w * obj.off;
+      const sy    = Math.min(H, pC.y);
+      if (sy > 0 && sy < H + 10) {
+        objQ.push({ key: obj.key, sx, sy, sc: pC.sc, side: sign });
+      }
+    }
+  }
+
+  // 他車投影
+  for (const car of cars) {
+    if (car.z < 40 || car.z > DRAW_D * SEG_LEN) continue;
+    const nSeg = Math.floor(car.z / SEG_LEN);
+    let cv2 = 0;
+    for (let k = 1; k <= nSeg && k < DRAW_D; k++) {
+      cv2 += segs[(startIdx + k) % segs.length].curve;
+    }
+    const cWorldX = car.lane * ROAD_W * 0.52 + (cv2 - camX) * ROAD_W * 0.38;
+    const pCar = projPt(cWorldX, car.z);
+    if (pCar && pCar.y > HORIZON && pCar.y < H + 20) {
+      carQ.push({ key: car.key, x: pCar.x, y: Math.min(H, pCar.y), sc: pCar.sc, z: car.z });
+    }
+  }
+
+  // オブジェクト描画（sy昇順＝奥から手前）
+  objQ.sort((a, b) => a.sy - b.sy);
+  for (const o of objQ) drawSpr(o.key, o.sx, o.sy, o.sc, o.side);
+
+  // 他車描画（z降順＝奥から手前）
+  carQ.sort((a, b) => b.z - a.z);
+  for (const c of carQ) {
+    const s = SPR[c.key];
+    const dw = Math.max(2, Math.round(s.width  * c.sc * 190));
+    const dh = Math.max(2, Math.round(s.height * c.sc * 190));
+    ctx.drawImage(s, (c.x - dw/2)|0, (c.y - dh)|0, dw, dh);
+  }
+
+  drawRain(now);
+  drawHUD(spd);
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(t => { lastT = t; requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
