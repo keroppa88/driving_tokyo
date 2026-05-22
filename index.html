@@ -151,6 +151,39 @@ makeSign('sg_speed',  '#380808', '#d03030', '≦  80',  '#ff8080');
 
 const SIGN_KEYS = ['sg_tokyo', 'sg_exit', 'sg_km', 'sg_speed'];
 
+// プレイヤー車（ボンネット越し視点）
+{
+  const oc = document.createElement('canvas');
+  oc.width = 64; oc.height = 36;
+  const c = oc.getContext('2d');
+  // ボンネット面
+  c.fillStyle = '#c02018';
+  c.beginPath();
+  c.moveTo(4, 36); c.lineTo(60, 36);
+  c.lineTo(54, 10); c.lineTo(10, 10);
+  c.closePath(); c.fill();
+  // ボンネット中央ライン
+  c.strokeStyle = '#a01810'; c.lineWidth = 2;
+  c.beginPath(); c.moveTo(32, 36); c.lineTo(32, 10); c.stroke();
+  // ボンネット横ライン
+  c.strokeStyle = '#881408'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(8, 24); c.lineTo(56, 24); c.stroke();
+  // エアダクト左右
+  c.fillStyle = '#701010';
+  c.fillRect(12, 14, 8, 8);
+  c.fillRect(44, 14, 8, 8);
+  // フロントウィンドウ下端（ダッシュボード上端）
+  c.fillStyle = '#1a1a1a';
+  c.fillRect(8, 8, 48, 4);
+  // ダッシュボード
+  c.fillStyle = '#181818';
+  c.fillRect(0, 0, 64, 9);
+  // フロントガラス反射
+  c.fillStyle = 'rgba(80,120,160,0.3)';
+  c.fillRect(8, 0, 48, 9);
+  SPR['player'] = oc;
+}
+
 // 他車
 function makeCar(key, body, roof) {
   const oc = document.createElement('canvas');
@@ -419,6 +452,21 @@ function drawCityGlow(sky) {
   ctx.fillRect(0, HORIZON - 20, W, 20);
 }
 
+// ─── プレイヤー車（底部・傾き付き）─────────────────────────
+function drawPlayerCar(camX) {
+  const s  = SPR['player'];
+  const dw = 120, dh = 68;
+  const cx = W / 2;
+  const cy = H + 10;                    // 少し画面外にかかる
+  const tilt = camX * 0.10;            // ステア量に比例して傾く
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tilt);
+  ctx.drawImage(s, -dw / 2, -dh, dw, dh);
+  ctx.restore();
+}
+
 // ─── HUD ─────────────────────────────────────────────────
 function drawHUD(spd) {
   const km = Math.floor(spd / MAX_SPD * 340);
@@ -558,6 +606,7 @@ function loop(now) {
   }
 
   drawRain(now);
+  drawPlayerCar(camX);
   drawHUD(spd);
 
   requestAnimationFrame(loop);
